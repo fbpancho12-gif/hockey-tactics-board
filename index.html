@@ -46,7 +46,8 @@ img { max-width: 100%; }
   };
   // Another open copy of the board changed the plays: show the new list.
   addEventListener('storage', (e) => { if (e.key === KEY) { docs = read() || {}; emit(); } });
-  window.claude = { use: async (name) => (name === 'db' ? db : null) };
+  // local: true tells the board it may save files itself (the online board asks Claude instead).
+  window.claude = { local: true, use: async (name) => (name === 'db' ? db : null) };
 })();
 </script>
 <title>Hockey Tactics Board</title>
@@ -281,6 +282,16 @@ body {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; pointer-events: none;
 }
 .hint { max-width: calc(60% - 20px); }
+.move-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.move-row .btn:not(.primary) { border: 1px solid var(--line); text-transform: none; letter-spacing: 0; font-family: var(--body); font-size: 15px; }
+#importText, #exportText {
+  display: block; width: 100%; min-height: 84px; margin-top: 8px; padding: 8px 10px; resize: vertical;
+  border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--fg);
+  font: 13px/1.4 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  -webkit-user-select: text; user-select: text;
+}
+#importText:focus, #exportText:focus { outline: 2px solid var(--accent); outline-offset: 0; }
+.vh { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; pointer-events: none; }
 
 @media (max-width: 1320px) {
   .actions .lbl, .view .lbl { display: none; }
@@ -406,6 +417,25 @@ body {
       <h2>Saved plays on this device</h2>
       <div class="plist" id="playList"></div>
       <p class="pnote" id="playsNote">Loading saved plays…</p>
+    </div>
+    <div id="moveBlock" hidden>
+      <h2>Move plays to another device</h2>
+      <div class="move-row">
+        <button class="btn" id="copyPlaysBtn">Copy all plays</button>
+        <button class="btn" id="filePlaysBtn" hidden>Save as file</button>
+        <button class="btn" id="importOpenBtn" aria-expanded="false" aria-controls="importBox">Import plays</button>
+      </div>
+      <textarea id="exportText" rows="3" readonly hidden aria-label="Plays to copy"></textarea>
+      <div id="importBox" hidden>
+        <textarea id="importText" rows="4" placeholder="Paste the copied plays here" aria-label="Plays to import"></textarea>
+        <div class="move-row">
+          <button class="btn primary" id="importBtn">Import</button>
+          <label class="btn" for="importFile">Choose file</label>
+          <input class="vh" type="file" id="importFile" accept=".json,application/json,text/plain">
+          <button class="btn" id="importCancelBtn">Cancel</button>
+        </div>
+      </div>
+      <p class="pnote" id="moveNote" hidden></p>
     </div>
   </div>
 
@@ -1098,7 +1128,9 @@ body {
     return open;
   }
   $('#colorsBtn').addEventListener('click', () => togglePop(pop, '#colorsBtn'));
-  $('#playsBtn').addEventListener('click', () => { if (togglePop($('#playsPop'), '#playsBtn')) { saveNote(''); renderPlays(); } });
+  $('#playsBtn').addEventListener('click', () => {
+    if (togglePop($('#playsPop'), '#playsBtn')) { saveNote(''); moveNote(''); $('#exportText').hidden = true; renderPlays(); }
+  });
   pop.addEventListener('click', (e) => {
     const b = e.target.closest('.sw'); if (!b) return;
     setTeamColor(b.dataset.team, b.dataset.color, snap());
@@ -1203,6 +1235,9 @@ body {
       slow: 'Can’t reach your saved plays yet. Check the connection; they will appear when it’s back.',
       error: 'Saved plays stopped loading. Reload the page to try again.',
     };
+    $('#moveBlock').hidden = !on;
+    $('#importOpenBtn').hidden = !canWrite;
+    $('#filePlaysBtn').hidden = !fileSaver;
     let msg = msgs[playsState] || '';
     if (!db && playsState !== 'loading') msg = msgs.off;
     if (playsState === 'ready' && !plays.length) {
@@ -1269,11 +1304,131 @@ body {
   $('#updateBtn').addEventListener('click', () => savePlay(false));
   $('#playName').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); savePlay(true); } });
 
+  // ---------- Moving plays between devices (copy / file, then import) ----------
+  // The online board and the installed iPad app keep separate lists, so plays travel as text.
+  const EXPORT_APP = 'hockey-tactics-board';
+  let fileSaver = null; // 'local' in the installed app, the downloads namespace in the online board
+  function moveNote(msg) { const n = $('#moveNote'); n.textContent = msg; n.hidden = !msg; }
+  const cleanBoard = (b) => (b ? sanitize({ teams: b.teams, frames: b.frames, items: b.items }) : null);
+  const boardKey = (s) => JSON.stringify({ t: s.teams, f: s.frames.map((f) => f.map(({ id, ...rest }) => rest)) });
+  const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+  function exportText() {
+    const list = plays.slice().sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)).map((p) => {
+      const s = cleanBoard(p.board);
+      if (!s) return null;
+      const out = { name: String(p.name || 'Untitled play').slice(0, 60), view: VIEWS[p.view] ? p.view : 'full', updatedAt: p.updatedAt || Date.now(), board: { teams: s.teams, frames: s.frames } };
+      if (p.example) out.example = true;
+      return out;
+    }).filter(Boolean);
+    return { count: list.length, text: list.length ? JSON.stringify({ app: EXPORT_APP, version: 1, plays: list }) : '' };
+  }
+
+  $('#copyPlaysBtn').addEventListener('click', () => {
+    const { count, text } = exportText();
+    const box = $('#exportText');
+    box.hidden = true;
+    if (!count) { moveNote('Save a play first, then copy it.'); return; }
+    const showText = () => {
+      box.value = text; box.hidden = false; box.focus(); box.select();
+      moveNote('Copying isn’t allowed here. The plays are selected above: tap Copy.');
+    };
+    try {
+      navigator.clipboard.writeText(text).then(
+        () => moveNote(`Copied ${plural(count, 'play')}. On the other device, open Plays, tap Import plays and paste.`),
+        showText,
+      );
+    } catch (e) { showText(); }
+  });
+
+  $('#filePlaysBtn').addEventListener('click', async () => {
+    const { count, text } = exportText();
+    if (!count) { moveNote('Save a play first, then save it as a file.'); return; }
+    const filename = `hockey-plays-${new Date().toISOString().slice(0, 10)}.json`;
+    if (fileSaver === 'local') {
+      const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+      const a = document.createElement('a');
+      a.href = url; a.download = filename;
+      document.body.append(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+      moveNote(`Saved ${filename} with ${plural(count, 'play')}.`);
+      return;
+    }
+    if (!fileSaver) return;
+    try {
+      await fileSaver.save({ filename, data: text });
+      moveNote(`Saved ${filename} with ${plural(count, 'play')}.`);
+    } catch (e) {
+      moveNote(e && e.code === 'declined' ? '' : 'Couldn’t save the file here. Use Copy all plays instead.');
+    }
+  });
+
+  function toggleImport(open) {
+    $('#importBox').hidden = !open;
+    $('#importOpenBtn').setAttribute('aria-expanded', String(open));
+    if (open) { $('#exportText').hidden = true; moveNote(''); $('#importText').focus(); }
+  }
+  $('#importOpenBtn').addEventListener('click', () => toggleImport($('#importBox').hidden));
+  $('#importCancelBtn').addEventListener('click', () => { $('#importText').value = ''; toggleImport(false); });
+  $('#importBtn').addEventListener('click', () => importPlays($('#importText').value));
+  $('#importFile').addEventListener('change', async (e) => {
+    const f = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (!f) return;
+    if (f.size > 5 * 1024 * 1024) { moveNote('That file is too big to be a plays export.'); return; }
+    try { importPlays(await f.text()); } catch (err) { moveNote('Couldn’t read that file.'); }
+  });
+
+  let importing = false;
+  async function importPlays(text) {
+    if (!db || !canWrite || importing) return;
+    let data;
+    try { data = JSON.parse(String(text || '').trim()); } catch (e) { data = null; }
+    const list = data && Array.isArray(data.plays) ? data.plays : Array.isArray(data) ? data : data && data.board ? [data] : null;
+    if (!list || !list.length) {
+      moveNote('That isn’t a list of plays. Tap Copy all plays on the other device again and paste the whole text.');
+      return;
+    }
+    importing = true; $('#importBtn').disabled = true;
+    const have = new Map();
+    plays.forEach((p) => { const s = cleanBoard(p.board); if (s) have.set(String(p.name), boardKey(s)); });
+    let added = 0, skipped = 0, failed = '';
+    try {
+      for (const raw of list.slice(0, 200)) {
+        const s = cleanBoard(raw && raw.board);
+        if (!s) { skipped++; continue; }
+        let name = String((raw && raw.name) || '').trim().slice(0, 60) || 'Imported play';
+        const key = boardKey(s);
+        if (have.has(name)) {
+          if (have.get(name) === key) { skipped++; continue; } // already here, unchanged
+          name = name.slice(0, 49) + ' (imported)';
+          if (have.get(name) === key) { skipped++; continue; }
+        }
+        const doc = { name, view: VIEWS[raw.view] ? raw.view : 'full', updatedAt: Date.now(), board: { teams: s.teams, frames: s.frames } };
+        if (raw.example) doc.example = true;
+        await db.collection('plays').add(doc);
+        have.set(name, key);
+        added++;
+      }
+    } catch (e) {
+      failed = e && e.code === 'quota_exceeded' ? ' Storage is full: delete some old plays and import again.' : ' The rest couldn’t be saved; check the connection and import again.';
+    } finally {
+      importing = false; $('#importBtn').disabled = false;
+    }
+    let msg = added ? `Imported ${plural(added, 'play')}.` : 'No new plays to import.';
+    if (skipped) msg += ` Skipped ${plural(skipped, 'play')} already here.`;
+    moveNote(msg + failed);
+    if (added && !failed) { $('#importText').value = ''; toggleImport(false); moveNote(msg); }
+    renderPlays();
+  }
+
   async function initPlays() {
     const c = window.claude;
     if (!c || typeof c.use !== 'function') { playsState = 'off'; renderPlays(); return; }
     try { db = await c.use('db'); } catch (e) { db = null; }
     if (!db) { playsState = 'off'; renderPlays(); return; }
+    if (c.local) fileSaver = 'local';
+    else { try { fileSaver = await c.use('downloads'); } catch (e) { fileSaver = null; } }
     try {
       const user = await c.use('user');
       if (user && user.can && (await user.can('data.write')) === false) canWrite = false;
@@ -1290,7 +1445,7 @@ body {
 
   // Keyboard (for iPad with keyboard or desktop)
   document.addEventListener('keydown', (e) => {
-    if (e.target.tagName === 'INPUT') return;
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
     if ((e.key === 'Delete' || e.key === 'Backspace') && selId) {
       e.preventDefault();
       mutate(() => { state.items = state.items.filter((i) => i.id !== selId); selId = null; });

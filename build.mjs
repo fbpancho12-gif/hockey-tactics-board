@@ -61,7 +61,8 @@ const localPlays = `<script>
   };
   // Another open copy of the board changed the plays: show the new list.
   addEventListener('storage', (e) => { if (e.key === KEY) { docs = read() || {}; emit(); } });
-  window.claude = { use: async (name) => (name === 'db' ? db : null) };
+  // local: true tells the board it may save files itself (the online board asks Claude instead).
+  window.claude = { local: true, use: async (name) => (name === 'db' ? db : null) };
 })();
 </script>`;
 

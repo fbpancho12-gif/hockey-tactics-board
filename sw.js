@@ -2,7 +2,7 @@
 // App files are answered from the cache straight away and refreshed in the background when online,
 // so a new version shows up the second time the board is opened after an update.
 // Change VERSION whenever the list of files changes.
-const VERSION = 'hockey-board-v1';
+const VERSION = 'hockey-board-v2';
 const FONTS = 'hockey-board-fonts';
 const APP_FILES = [
   './',
