@@ -1,0 +1,1326 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#17457d">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Hockey Board">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" type="image/png" href="icons/icon-192.png">
+<style>
+:root { color-scheme: light; padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); }
+body { margin: 0; font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+img { max-width: 100%; }
+[hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<script>
+(() => {
+  if (window.claude) return;
+  const KEY = 'fh-plays-v1';
+  const subs = [];
+  const read = () => { try { return JSON.parse(localStorage.getItem(KEY) || 'null'); } catch (e) { return null; } };
+  const write = (o) => { try { localStorage.setItem(KEY, JSON.stringify(o)); return true; } catch (e) { return false; } };
+  let docs = read();
+  if (!docs || typeof docs !== 'object') { docs = { 'example-pc-drag-flick': {"name":"Example: PC drag flick","example":true,"view":"half","updatedAt":1794787200000,"board":{"teams":{"a":"#FFC21A","b":"#E0245E","ga":"#2DC653","gb":"#7B2CBF"},"items":[{"kind":"arrow","style":"pass","x1":91.1,"y1":15.9,"x2":76.4,"y2":27.2},{"kind":"arrow","style":"pass","x1":75.8,"y1":27.5,"x2":90.8,"y2":26.3},{"kind":"arrow","style":"run","x1":92.6,"y1":21.5,"x2":81.5,"y2":25.5},{"kind":"arrow","style":"run","x1":92.4,"y1":30.5,"x2":84,"y2":30.5},{"kind":"player","team":"a","num":11,"x":92.4,"y":15.67},{"kind":"player","team":"a","num":8,"x":75.8,"y":27.5},{"kind":"player","team":"a","num":5,"x":74.2,"y":30.2},{"kind":"player","team":"a","num":9,"x":76.6,"y":19.3},{"kind":"player","team":"a","num":10,"x":77,"y":36.2},{"kind":"player","team":"b","num":1,"gk":true,"x":90.6,"y":27.5},{"kind":"player","team":"b","num":6,"x":92.6,"y":21.5},{"kind":"player","team":"b","num":2,"x":92.4,"y":30.5},{"kind":"player","team":"b","num":4,"x":92.6,"y":34},{"kind":"player","team":"b","num":13,"x":44,"y":20},{"kind":"player","team":"b","num":14,"x":44,"y":35},{"kind":"ball","x":91,"y":16.4}]}} }; write(docs); }
+  const meta = { fromCache: false, hasPendingWrites: false };
+  const snapshot = () => ({ docs: Object.keys(docs).map((id) => ({ id, exists: true, data: () => docs[id], metadata: meta })), metadata: meta });
+  const emit = () => setTimeout(() => subs.forEach((f) => f(snapshot())), 0);
+  const fail = (code) => Object.assign(new Error(code), { code });
+  const ref = (id) => ({
+    id, path: 'plays/' + id,
+    set: async (d) => { const next = { ...docs, [id]: JSON.parse(JSON.stringify(d)) }; if (!write(next)) throw fail('quota_exceeded'); docs = next; emit(); },
+    delete: async () => { const next = { ...docs }; delete next[id]; if (!write(next)) throw fail('unavailable'); docs = next; emit(); },
+  });
+  const db = {
+    collection: () => ({
+      add: async (d) => { const r = ref('p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6)); await r.set(d); return r; },
+      onSnapshot: (f) => { subs.push(f); emit(); return () => {}; },
+    }),
+    doc: (p) => ref(String(p).split('/')[1]),
+  };
+  // Another open copy of the board changed the plays: show the new list.
+  addEventListener('storage', (e) => { if (e.key === KEY) { docs = read() || {}; emit(); } });
+  window.claude = { use: async (name) => (name === 'db' ? db : null) };
+})();
+</script>
+<title>Hockey Tactics Board</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Barlow:wght@500;600&display=swap">
+<style>
+/* Layout: one-screen board. Tool rail on top, the pitch fills the rest, a context bar floats over the pitch for the selected piece. */
+:root {
+  --bg: #e9edf2;
+  --panel: #ffffff;
+  --fg: #142030;
+  --muted: #5a6879;
+  --line: #d3dae3;
+  --accent: #17457d;
+  --accent-fg: #ffffff;
+  --danger: #c0262d;
+  --sel: #ffd60a;
+  --turf: #2563a8;
+  --turf-band: #2969b0;
+  --runoff: #1c4b80;
+  --chalk: #ffffff;
+  --display: "Barlow Condensed", "Arial Narrow", "Helvetica Neue", system-ui, sans-serif;
+  --body: "Barlow", -apple-system, "Segoe UI", system-ui, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0d131b; --panel: #17202b; --fg: #e6ecf3; --muted: #93a2b4; --line: #2a3747;
+    --accent: #4f93e3; --accent-fg: #06121f; --danger: #ff5c63;
+    --turf: #1e5595; --turf-band: #215a9c; --runoff: #153c69;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0d131b; --panel: #17202b; --fg: #e6ecf3; --muted: #93a2b4; --line: #2a3747;
+  --accent: #4f93e3; --accent-fg: #06121f; --danger: #ff5c63;
+  --turf: #1e5595; --turf-band: #215a9c; --runoff: #153c69;
+  color-scheme: dark;
+}
+
+html { height: 100%; box-sizing: border-box; }
+*, *::before, *::after { box-sizing: inherit; }
+body {
+  height: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--body);
+  overflow: hidden;
+  overscroll-behavior: none;
+  -webkit-user-select: none; user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.app {
+  position: relative;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-block: 10px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+
+/* ---------- Tool rail ---------- */
+.bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; }
+.group {
+  display: flex; flex-wrap: wrap; gap: 2px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 3px;
+}
+.btn {
+  appearance: none; border: 0; background: transparent; color: var(--fg);
+  min-height: 44px; min-width: 44px; padding: 0 12px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  border-radius: 9px; cursor: pointer;
+  font-family: var(--display); font-weight: 600; font-size: 17px; letter-spacing: .03em; text-transform: uppercase;
+  touch-action: manipulation;
+}
+.btn svg { width: 22px; height: 22px; flex: none; }
+.btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.btn[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg); }
+.btn:disabled { opacity: .4; cursor: default; }
+.btn.danger { color: var(--danger); }
+.btn.armed { background: var(--danger); color: #fff; }
+.sep { width: 1px; align-self: stretch; margin: 6px 3px; background: var(--line); }
+.tok { stroke: rgba(0,0,0,.45); stroke-width: 1.2; }
+
+/* ---------- Pitch ---------- */
+.stage {
+  position: relative; flex: 1; min-height: 0;
+  background: var(--runoff); border-radius: 14px; overflow: hidden;
+}
+#board { display: block; width: 100%; height: 100%; touch-action: none; }
+.runoff { fill: var(--runoff); }
+.turf { fill: var(--turf); }
+.band { fill: var(--turf-band); }
+.chalk { fill: none; stroke: var(--chalk); stroke-width: .18; }
+.dash { stroke-dasharray: .5 2.2; }
+.spot { fill: var(--chalk); }
+.goal { fill: rgba(255,255,255,.22); stroke: var(--chalk); stroke-width: .15; }
+.mark { font-family: var(--display); font-weight: 600; font-size: 1.6px; fill: rgba(255,255,255,.45); letter-spacing: .05px; }
+
+.piece { cursor: grab; }
+.pad { fill: transparent; }
+.shadow { fill: rgba(0,0,0,.3); }
+.body { stroke: rgba(0,0,0,.5); stroke-width: .14; }
+.num { font-family: var(--display); font-weight: 700; font-size: 2.3px; text-anchor: middle; dominant-baseline: central; pointer-events: none; }
+.ballc { fill: #ffffff; stroke: #1b1b1b; stroke-width: .14; }
+.gkring { fill: none; stroke-width: .5; }
+.ring { fill: none; stroke: var(--sel); stroke-width: .32; stroke-dasharray: .9 .5; }
+
+.arrow { cursor: pointer; }
+.arrow .hit { fill: none; stroke: transparent; stroke-width: 3; stroke-linecap: round; }
+.arrow .shaft { fill: none; stroke: var(--chalk); stroke-width: .36; stroke-linecap: round; stroke-linejoin: round; }
+.arrow.pass .shaft { stroke-dasharray: 1 .8; }
+.arrow .head { fill: var(--chalk); }
+.arrow.sel .shaft { stroke: var(--sel); }
+.arrow.sel .head { fill: var(--sel); }
+.arrow.draft { opacity: .85; }
+
+.ink { cursor: pointer; }
+.ink .hit { fill: none; stroke: transparent; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+.ink .glow { fill: none; stroke: var(--sel); stroke-width: 1.3; opacity: .5; stroke-linecap: round; stroke-linejoin: round; }
+.ink .line { fill: none; stroke-width: .4; stroke-linecap: round; stroke-linejoin: round; }
+.pen { width: 36px; height: 36px; border-radius: 50%; border: 2px solid rgba(0,0,0,.3); padding: 0; margin: 0 2px; cursor: pointer; touch-action: manipulation; }
+.pen[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--panel), 0 0 0 4px var(--accent); }
+.pen:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+/* ---------- Floating UI ---------- */
+.hint {
+  position: absolute; top: 10px; left: 10px; max-width: calc(100% - 20px);
+  padding: 7px 11px; border-radius: 9px;
+  background: rgba(8, 22, 40, .55); color: #f2f6fb;
+  font-size: 14px; font-weight: 500; line-height: 1.3; pointer-events: none;
+}
+.ctx {
+  position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%);
+  max-width: calc(100% - 24px);
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 4px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 4px;
+  box-shadow: 0 8px 28px rgba(0,0,0,.28);
+  transition: opacity .15s;
+}
+.stage.dragging .ctx { opacity: 0; pointer-events: none; }
+.chip { display: inline-flex; align-items: center; gap: 8px; padding: 0 10px 0 8px; font-family: var(--display); font-weight: 600; font-size: 17px; text-transform: uppercase; letter-spacing: .03em; color: var(--muted); }
+.chip i { width: 18px; height: 18px; border-radius: 50%; border: 1px solid rgba(0,0,0,.4); }
+.stepper { display: inline-flex; align-items: center; border: 1px solid var(--line); border-radius: 10px; }
+.stepper .btn { font-size: 24px; padding: 0; }
+.stepper input {
+  width: 56px; height: 44px; border: 0; background: transparent; color: var(--fg); text-align: center;
+  font-family: var(--display); font-weight: 700; font-size: 24px; font-variant-numeric: tabular-nums;
+  -webkit-user-select: text; user-select: text;
+}
+.stepper input:focus { outline: 2px solid var(--accent); border-radius: 6px; }
+.seg { display: inline-flex; gap: 2px; }
+
+.pop {
+  position: absolute; z-index: 5; top: 66px; right: max(16px, env(safe-area-inset-right, 0px));
+  width: min(360px, calc(100% - 32px));
+  max-height: calc(100% - 80px); overflow-y: auto;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 14px;
+  box-shadow: 0 12px 36px rgba(0,0,0,.3);
+  display: grid; gap: 12px;
+}
+.pop h2 { margin: 0; font-family: var(--display); font-weight: 600; font-size: 15px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.swatches { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 7px; }
+.sw {
+  width: 36px; height: 36px; border-radius: 50%; border: 2px solid rgba(0,0,0,.25); cursor: pointer; padding: 0;
+  touch-action: manipulation;
+}
+.sw[aria-pressed="true"] { box-shadow: 0 0 0 3px var(--panel), 0 0 0 5px var(--accent); }
+.sw:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.custom { position: relative; width: 36px; height: 36px; border-radius: 50%; border: 2px dashed var(--muted); display: grid; place-items: center; color: var(--muted); font-size: 22px; cursor: pointer; }
+.custom input { position: absolute; inset: 0; opacity: 0; width: 100%; height: 100%; cursor: pointer; }
+
+[hidden] { display: none !important; }
+
+/* ---------- Steps (timeline under the pitch) ---------- */
+.steps {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 3px 3px 3px 12px;
+}
+.steps-lbl { font-family: var(--display); font-weight: 600; font-size: 15px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin-right: 2px; }
+.btn.icon { padding: 0; }
+.step-chips { display: flex; gap: 4px; min-width: 0; max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+.step-chip {
+  flex: none; min-width: 40px; height: 40px; padding: 0 6px; border-radius: 9px;
+  border: 1px solid var(--line); background: var(--bg); color: var(--fg); cursor: pointer;
+  font-family: var(--display); font-weight: 700; font-size: 19px; font-variant-numeric: tabular-nums;
+  touch-action: manipulation;
+}
+.step-chip[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+.step-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.steps-help { font-size: 14px; color: var(--muted); padding: 0 6px; min-width: 0; }
+.grow { flex: 1; }
+#playBtn { min-width: 104px; }
+.stage.playing #board { cursor: default; }
+
+/* ---------- Saved plays ---------- */
+#playsPop { width: min(400px, calc(100% - 32px)); }
+.save-row { display: flex; gap: 6px; margin-top: 8px; }
+#playName {
+  flex: 1; min-width: 0; height: 44px; padding: 0 12px;
+  border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--fg);
+  font-family: var(--body); font-weight: 500; font-size: 16px;
+  -webkit-user-select: text; user-select: text;
+}
+#playName:focus { outline: 2px solid var(--accent); outline-offset: 0; }
+.btn.primary { background: var(--accent); color: var(--accent-fg); }
+.btn.wide { width: 100%; margin-top: 6px; border: 1px solid var(--line); justify-content: flex-start; text-transform: none; letter-spacing: 0; font-family: var(--body); font-size: 15px; }
+.pnote { margin: 8px 0 0; font-size: 14px; line-height: 1.4; color: var(--muted); }
+.pnote[hidden] { display: none; }
+.plist { display: grid; gap: 4px; margin-top: 8px; }
+.plist:empty { display: none; }
+.prow { display: flex; align-items: center; gap: 2px; padding-right: 4px; border-radius: 10px; background: var(--bg); }
+.prow.current { box-shadow: inset 0 0 0 2px var(--accent); }
+.popen {
+  flex: 1; min-width: 0; min-height: 52px; padding: 7px 12px; display: grid; gap: 1px; align-content: center;
+  border: 0; background: transparent; color: var(--fg); text-align: left; cursor: pointer; border-radius: 10px;
+  font-family: var(--body); touch-action: manipulation;
+}
+.popen:focus-visible { outline: 2px solid var(--accent); }
+.pname { font-weight: 600; font-size: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pmeta { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.prow .btn { font-size: 15px; min-height: 40px; }
+.playtag {
+  position: absolute; top: 10px; right: 10px; max-width: 38%;
+  padding: 7px 11px; border-radius: 9px; background: rgba(8, 22, 40, .55); color: #f2f6fb;
+  font-family: var(--display); font-weight: 600; font-size: 16px; letter-spacing: .03em; text-transform: uppercase;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; pointer-events: none;
+}
+.hint { max-width: calc(60% - 20px); }
+
+@media (max-width: 1320px) {
+  .actions .lbl, .view .lbl { display: none; }
+  .btn { padding: 0 10px; }
+}
+@media (max-width: 900px) {
+  .steps-help { display: none; }
+}
+@media (max-width: 820px) {
+  .tools .lbl { display: none; }
+}
+@media (max-width: 560px) {
+  .actions .lbl { display: none; }
+  .btn { padding: 0 8px; }
+  .hint { font-size: 12px; }
+}
+@media (prefers-reduced-motion: reduce) { .ctx { transition: none; } }
+</style>
+
+<div class="app" id="app">
+  <header class="bar">
+    <div class="group tools" role="toolbar" aria-label="Tools">
+      <button class="btn" data-tool="move" aria-pressed="true" title="Move">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M3 12h18M12 3l-3 3M12 3l3 3M12 21l-3-3M12 21l3-3M3 12l3-3M3 12l3 3M21 12l-3-3M21 12l-3 3"/></svg>
+        <span class="lbl">Move</span>
+      </button>
+      <span class="sep"></span>
+      <button class="btn" data-tool="a" aria-pressed="false" title="Add player">
+        <svg viewBox="0 0 24 24"><circle class="tok" id="tokA" cx="12" cy="12" r="9" fill="#FFC21A"/></svg>
+        <span class="lbl">Player</span>
+      </button>
+      <button class="btn" data-tool="b" aria-pressed="false" title="Add opponent">
+        <svg viewBox="0 0 24 24"><circle class="tok" id="tokB" cx="12" cy="12" r="9" fill="#E0245E"/></svg>
+        <span class="lbl">Opponent</span>
+      </button>
+      <button class="btn" data-tool="ball" aria-pressed="false" title="Add ball">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="5.5" fill="#fff" stroke="#1b1b1b" stroke-width="1.5"/></svg>
+        <span class="lbl">Ball</span>
+      </button>
+      <span class="sep"></span>
+      <button class="btn" data-tool="pass" aria-pressed="false" title="Draw pass">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M3 19l2.5-2.5M8 14l2.5-2.5M13 9l2-2" /><path d="M20 4l-7.5 2 5.5 5.5z" fill="currentColor" stroke="none"/></svg>
+        <span class="lbl">Pass</span>
+      </button>
+      <button class="btn" data-tool="run" aria-pressed="false" title="Draw run">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M3 19l12-12"/><path d="M20 4l-7.5 2 5.5 5.5z" fill="currentColor" stroke="none"/></svg>
+        <span class="lbl">Run</span>
+      </button>
+      <button class="btn" data-tool="dribble" aria-pressed="false" title="Draw dribble">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 19c1-3 3.5-1 4.5-3.5S7 12 9.5 11s3.5 1 4.5-1.5"/><path d="M20 4l-7.5 2 5.5 5.5z" fill="currentColor" stroke="none"/></svg>
+        <span class="lbl">Dribble</span>
+      </button>
+      <span class="sep"></span>
+      <button class="btn" data-tool="draw" aria-pressed="false" title="Draw freehand">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15.5 4.5l4 4L9 19l-5 1 1-5z"/><path d="M13.5 6.5l4 4"/></svg>
+        <span class="lbl">Draw</span>
+      </button>
+    </div>
+    <div class="group view" role="group" aria-label="Pitch view">
+      <button class="btn" data-view="full" aria-pressed="true" title="Full pitch">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="5" width="20" height="14" rx="1"/><path d="M12 5v14M2 9.5a3 3 0 010 5M22 9.5a3 3 0 000 5"/></svg>
+        <span class="lbl">Full</span>
+      </button>
+      <button class="btn" data-view="tall" aria-pressed="false" title="Vertical full pitch (for holding the iPad upright)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="5" y="2" width="14" height="20" rx="1"/><path d="M5 12h14M9.5 2a3 3 0 005 0M9.5 22a3 3 0 015 0"/></svg>
+        <span class="lbl">Vertical</span>
+      </button>
+      <button class="btn" data-view="half" aria-pressed="false" title="Half pitch (circle at the top)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="3" width="16" height="18" rx="1"/><path d="M7 3a5 5 0 0010 0M10.5 3V2h3v1"/></svg>
+        <span class="lbl">Half</span>
+      </button>
+    </div>
+    <div class="group actions">
+      <button class="btn" id="playsBtn" title="Saved plays" aria-expanded="false" aria-controls="playsPop">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6v3H9z"/><path d="M8.5 4.5H5.5v16.5h13V4.5h-3"/><path d="M8.5 11h7M8.5 15h4.5"/></svg>
+        <span class="lbl">Plays</span>
+      </button>
+      <button class="btn" id="undoBtn" title="Undo" disabled>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14L4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 010 11H11"/></svg>
+        <span class="lbl">Undo</span>
+      </button>
+      <button class="btn" id="colorsBtn" title="Team colors" aria-expanded="false" aria-controls="colorsPop">
+        <svg viewBox="0 0 24 24"><circle id="tokA2" cx="9" cy="12" r="6.5" fill="#FFC21A" class="tok"/><circle id="tokB2" cx="15" cy="12" r="6.5" fill="#E0245E" class="tok"/></svg>
+        <span class="lbl">Colors</span>
+      </button>
+      <button class="btn danger" id="clearBtn" title="Clear the board">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v5M14 11v5"/></svg>
+        <span class="lbl" id="clearLbl">Clear</span>
+      </button>
+    </div>
+  </header>
+
+  <div class="pop" id="colorsPop" hidden>
+    <div>
+      <h2>Players</h2>
+      <div class="swatches" data-team="a"></div>
+    </div>
+    <div>
+      <h2>Players' goalkeeper</h2>
+      <div class="swatches" data-team="ga"></div>
+    </div>
+    <div>
+      <h2>Opponents</h2>
+      <div class="swatches" data-team="b"></div>
+    </div>
+    <div>
+      <h2>Opponents' goalkeeper</h2>
+      <div class="swatches" data-team="gb"></div>
+    </div>
+  </div>
+
+  <div class="pop" id="playsPop" hidden>
+    <div id="saveBlock">
+      <h2>Save this board</h2>
+      <div class="save-row">
+        <input id="playName" type="text" maxlength="60" placeholder="Name, e.g. PC attack drag flick" autocomplete="off" aria-label="Play name">
+        <button class="btn primary" id="saveNewBtn">Save</button>
+      </div>
+      <button class="btn wide" id="updateBtn" hidden></button>
+      <p class="pnote" id="saveNote" hidden></p>
+    </div>
+    <div>
+      <h2>Saved plays on this device</h2>
+      <div class="plist" id="playList"></div>
+      <p class="pnote" id="playsNote">Loading saved plays…</p>
+    </div>
+  </div>
+
+  <main class="stage" id="stage">
+    <svg id="board" viewBox="-5 -5 101.4 65" preserveAspectRatio="xMidYMid meet" aria-label="Field hockey pitch">
+      <g id="world">
+        <g id="pitch"></g>
+        <g id="inkLayer"></g>
+        <g id="arrowLayer"></g>
+        <g id="pieceLayer"></g>
+      </g>
+    </svg>
+    <div class="hint" id="hint"></div>
+    <div class="playtag" id="playTag" hidden></div>
+    <div class="ctx" id="ctx" hidden></div>
+  </main>
+
+  <footer class="steps" aria-label="Steps">
+    <span class="steps-lbl">Steps</span>
+    <button class="btn icon" id="prevStepBtn" title="Previous step" aria-label="Previous step">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>
+    </button>
+    <div class="step-chips" id="stepChips"></div>
+    <button class="btn icon" id="nextStepBtn" title="Next step" aria-label="Next step">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg>
+    </button>
+    <button class="btn" id="addStepBtn" title="Add a step after this one">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+      <span class="lbl">Add step</span>
+    </button>
+    <button class="btn danger" id="delStepBtn" title="Delete this step">
+      <span class="lbl-always">Delete step</span>
+    </button>
+    <span class="steps-help" id="stepsHelp">Add a step, move the players, then tap Play to watch the move.</span>
+    <span class="grow"></span>
+    <button class="btn primary" id="playBtn" title="Play the steps in order">
+      <svg class="play-ic" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15l12.5-7.5z"/></svg>
+      <svg class="stop-ic" viewBox="0 0 24 24" fill="currentColor" hidden><rect x="6" y="6" width="12" height="12" rx="1.5"/></svg>
+      <span class="lbl">Play</span>
+    </button>
+  </footer>
+</div>
+
+<script>
+(() => {
+  // Pitch dimensions in metres (FIH): 91.4 x 55, shooting circle 14.63 m, goal 3.66 m.
+  const L = 91.4, W = 55, MID = W / 2, POST = 1.83;
+  const BOUNDS = { x1: -4.2, y1: -4.2, x2: L + 4.2, y2: W + 4.2 };
+  const PRESETS = ['#FFC21A', '#FF7A1A', '#E0245E', '#C1121F', '#7B2CBF', '#1B998B', '#2DC653', '#111827', '#F4F4F4', '#4CC9F0'];
+  const STORE_KEY = 'fh-board-v1';
+  const HEX = /^#[0-9a-fA-F]{6}$/;
+
+  const $ = (s) => document.querySelector(s);
+  const svg = $('#board'), world = $('#world'), inkLayer = $('#inkLayer'), arrowLayer = $('#arrowLayer'), pieceLayer = $('#pieceLayer');
+  const PREFS_KEY = 'fh-board-prefs';
+  const PENS = ['#FFFFFF', '#FFD60A', '#FF4D4D', '#111111'];
+  // Vertical and Half turn the pitch a quarter turn so the right-hand goal sits at the top of the screen.
+  const TURN = 'matrix(0 -1 1 0 0 91.4)';
+  const VIEWS = {
+    full: { box: '-5 -5 101.4 65', world: '', spin: '' },
+    tall: { box: '-5 -5 65 101.4', world: TURN, spin: ' rotate(90)' },
+    half: { box: '-5 -5 65 55.4', world: TURN, spin: ' rotate(90)' },
+  };
+  let view = 'full', pen = PENS[0];
+  let currentPlay = null; // { id, name } of the saved play last opened or saved on this device
+  const DOC_ID = /^[A-Za-z0-9_\-.~:@+]{1,200}$/;
+  const stage = $('#stage'), ctx = $('#ctx'), hint = $('#hint'), pop = $('#colorsPop');
+  const uid = () => Math.random().toString(36).slice(2, 9);
+  const r2 = (n) => Math.round(n * 100) / 100;
+
+  // ---------- Pitch ----------
+  function drawPitch() {
+    const bands = Array.from({ length: 10 }, (_, i) => i % 2 ? `<rect class="band" x="${r2(i * L / 10)}" y="0" width="${r2(L / 10)}" height="${W}"/>` : '').join('');
+    const half = `
+      <path class="chalk" d="M0 ${r2(MID - POST - 14.63)} A14.63 14.63 0 0 1 14.63 ${MID - POST} L14.63 ${MID + POST} A14.63 14.63 0 0 1 0 ${r2(MID + POST + 14.63)}"/>
+      <path class="chalk dash" d="M0 ${r2(MID - POST - 19.63)} A19.63 19.63 0 0 1 19.63 ${MID - POST} L19.63 ${MID + POST} A19.63 19.63 0 0 1 0 ${r2(MID + POST + 19.63)}"/>
+      <circle class="spot" cx="6.475" cy="${MID}" r=".25"/>
+      <rect class="goal" x="-1.2" y="${MID - POST}" width="1.2" height="${POST * 2}"/>
+      <path class="chalk" d="M0 ${r2(MID - POST - 5)}h.6M0 ${r2(MID - POST - 10)}h.6M0 ${r2(MID + POST + 5)}h.6M0 ${r2(MID + POST + 10)}h.6M5 0v.6M5 ${W}v-.6"/>`;
+    $('#pitch').innerHTML = `
+      <rect class="runoff" x="-5" y="-5" width="101.4" height="65"/>
+      <rect class="turf" x="0" y="0" width="${L}" height="${W}"/>
+      ${bands}
+      <rect class="chalk" x="0" y="0" width="${L}" height="${W}"/>
+      <path class="chalk" d="M${L / 2} 0V${W}M22.9 0V${W}M68.5 0V${W}"/>
+      <circle class="spot" cx="${L / 2}" cy="${MID}" r=".22"/>
+      <g>${half}</g>
+      <g transform="translate(${L} 0) scale(-1 1)">${half}</g>
+      <text class="mark" transform="translate(22.9 ${W + 2.3})${VIEWS[view].spin}" text-anchor="middle" dominant-baseline="central">23 m</text>
+      <text class="mark" transform="translate(68.5 ${W + 2.3})${VIEWS[view].spin}" text-anchor="middle" dominant-baseline="central">23 m</text>`;
+  }
+
+  // ---------- State ----------
+  // A play is a list of steps ("frames"). Each step holds its own pieces, arrows and drawings.
+  // A piece keeps the same id in every step, so playback knows where each one moves.
+  const MAX_STEPS = 30;
+  function exampleFrames() {
+    const P = (id, team, num, x, y, gk) => ({ id, kind: 'player', team, num, x, y, gk: !!gk });
+    const A = (id, style, x1, y1, x2, y2) => ({ id, kind: 'arrow', style, x1, y1, x2, y2 });
+    const step1 = [
+      A('xa1', 'pass', 58, 31, 73.5, 19.5), A('xa2', 'run', 68, 43, 80, 34), A('xa3', 'dribble', 74, 18.5, 81, 23.5),
+      P('pa10', 'a', 10, 58, 31), P('pa9', 'a', 9, 74, 18.5), P('pa7', 'a', 7, 68, 43), P('pa4', 'a', 4, 46, 22),
+      P('pb1', 'b', 1, 89.3, MID, true), P('pb3', 'b', 3, 79, 24), P('pb5', 'b', 5, 78, 37), P('pb8', 'b', 8, 64, 27),
+      { id: 'ball1', kind: 'ball', x: 59.9, y: 32.2 },
+    ];
+    const step2 = [
+      A('xb1', 'pass', 81, 23.5, 90.6, 26.6),
+      P('pa10', 'a', 10, 64, 29), P('pa9', 'a', 9, 81, 23.5), P('pa7', 'a', 7, 80.5, 33.5), P('pa4', 'a', 4, 53, 24),
+      P('pb1', 'b', 1, 88.4, 26.2, true), P('pb3', 'b', 3, 83.6, 25.6), P('pb5', 'b', 5, 81.6, 30.6), P('pb8', 'b', 8, 69, 25),
+      { id: 'ball1', kind: 'ball', x: 82.6, y: 24.4 },
+    ];
+    return [step1, step2];
+  }
+  function makeState(teams, frames, frame, example) {
+    const s = { teams, frames, frame: Math.max(0, Math.min(frames.length - 1, frame | 0)), example };
+    // state.items is always the current step's list
+    Object.defineProperty(s, 'items', {
+      get() { return this.frames[this.frame]; },
+      set(v) { this.frames[this.frame] = v; },
+      enumerable: false,
+    });
+    return s;
+  }
+  // a / b = outfield colors, ga / gb = each team's goalkeeper
+  const DEFAULT_TEAMS = { a: '#FFC21A', b: '#E0245E', ga: '#2DC653', gb: '#7B2CBF' };
+  const COLOR_KEYS = ['a', 'ga', 'b', 'gb'];
+  let state = makeState({ ...DEFAULT_TEAMS }, exampleFrames(), 0, true);
+  let tool = 'move', selId = null;
+  let history = [];
+
+  const find = (id) => state.items.find((i) => i.id === id);
+  const snap = () => JSON.stringify({ teams: state.teams, frames: state.frames, frame: state.frame, example: state.example });
+
+  const ITEM_ID = /^[A-Za-z0-9]{1,16}$/;
+  function cleanItems(list) {
+    const n = (v) => (typeof v === 'number' && isFinite(v) ? v : 0);
+    const seen = new Set();
+    const keepId = (v) => { const id = typeof v === 'string' && ITEM_ID.test(v) && !seen.has(v) ? v : uid(); seen.add(id); return id; };
+    return list.filter((i) => i && ['player', 'ball', 'arrow', 'ink'].includes(i.kind)).slice(0, 400).map((i) => {
+      const id = keepId(i.id);
+      if (i.kind === 'ink') {
+        const pts = (Array.isArray(i.pts) ? i.pts : []).slice(0, 3000).map((q) => [n(q && q[0]), n(q && q[1])]);
+        return { id, kind: 'ink', color: HEX.test(i.color) ? i.color : PENS[0], pts };
+      }
+      if (i.kind === 'arrow') return { id, kind: 'arrow', style: ['pass', 'run', 'dribble'].includes(i.style) ? i.style : 'run', x1: n(i.x1), y1: n(i.y1), x2: n(i.x2), y2: n(i.y2) };
+      if (i.kind === 'ball') return { id, kind: 'ball', x: n(i.x), y: n(i.y) };
+      const num = parseInt(i.num, 10);
+      return { id, kind: 'player', team: i.team === 'b' ? 'b' : 'a', gk: !!i.gk, num: isFinite(num) ? Math.max(0, Math.min(99, num)) : '', x: n(i.x), y: n(i.y) };
+    });
+  }
+  function sanitize(s) {
+    if (!s) return null;
+    // Older boards and plays stored a single list of items; treat that as one step.
+    const raw = Array.isArray(s.frames) ? s.frames : Array.isArray(s.items) ? [s.items] : null;
+    if (!raw) return null;
+    let frames = raw.filter(Array.isArray).slice(0, MAX_STEPS).map(cleanItems);
+    if (!frames.length) frames = [[]];
+    const teams = {};
+    COLOR_KEYS.forEach((k) => { teams[k] = HEX.test(s.teams?.[k]) ? s.teams[k] : DEFAULT_TEAMS[k]; });
+    return makeState(teams, frames, typeof s.frame === 'number' ? s.frame : 0, !!s.example);
+  }
+  function restore(json) { const s = sanitize(JSON.parse(json)); if (s) state = s; }
+
+  function save() {
+    try { localStorage.setItem(STORE_KEY, snap()); } catch (e) { /* storage unavailable */ }
+  }
+  function load() {
+    try { const raw = localStorage.getItem(STORE_KEY); if (raw) restore(raw); } catch (e) { /* keep example */ }
+  }
+  function savePrefs() {
+    try { localStorage.setItem(PREFS_KEY, JSON.stringify({ view, pen, currentPlay })); } catch (e) { /* storage unavailable */ }
+  }
+  function loadPrefs() {
+    try {
+      const p = JSON.parse(localStorage.getItem(PREFS_KEY) || '{}');
+      if (VIEWS[p.view]) view = p.view;
+      if (PENS.includes(p.pen)) pen = p.pen;
+      if (p.currentPlay && DOC_ID.test(p.currentPlay.id) && typeof p.currentPlay.name === 'string') {
+        currentPlay = { id: p.currentPlay.id, name: p.currentPlay.name.slice(0, 60) };
+      }
+    } catch (e) { /* defaults */ }
+  }
+
+  function pushHistory(before) {
+    history.push(before);
+    if (history.length > 150) history.shift();
+    state.example = false;
+    $('#undoBtn').disabled = false;
+    save(); renderSteps();
+  }
+  function mutate(fn) { const before = snap(); fn(); pushHistory(before); render(); renderCtx(); }
+
+  function undo() {
+    if (playing) stopPlayback();
+    if (!history.length) return;
+    restore(history.pop());
+    selId = null;
+    $('#undoBtn').disabled = !history.length;
+    save(); render(); renderCtx(); paintTeams(); updateHint(); renderSteps();
+  }
+
+  function nextNum(team) {
+    const used = new Set(state.items.filter((i) => i.kind === 'player' && i.team === team).map((i) => i.num));
+    for (let n = 1; n < 100; n++) if (!used.has(n)) return n;
+    return '';
+  }
+  const pieceColor = (p) => state.teams[(p.gk ? 'g' : '') + p.team];
+  function textOn(hex) {
+    const v = parseInt(hex.slice(1), 16);
+    const lum = (0.299 * (v >> 16) + 0.587 * ((v >> 8) & 255) + 0.114 * (v & 255)) / 255;
+    return lum > 0.6 ? '#111111' : '#ffffff';
+  }
+
+  // ---------- Rendering ----------
+  function arrowSVG(a, draft) {
+    const dx = a.x2 - a.x1, dy = a.y2 - a.y1, len = Math.hypot(dx, dy) || 0.001;
+    const ux = dx / len, uy = dy / len, nx = -uy, ny = ux;
+    const H = Math.min(1.9, len * 0.5), HW = 1.05;
+    const bx = a.x2 - ux * H, by = a.y2 - uy * H;
+    let d;
+    if (a.style === 'dribble') {
+      const run = len - H, amp = 0.6, wl = 2.4, steps = Math.max(2, Math.ceil(run / 0.2));
+      const pts = [];
+      for (let i = 0; i <= steps; i++) {
+        const t = (i / steps) * run;
+        const taper = Math.min(1, t / 1.2, (run - t) / 1.2);
+        const off = amp * Math.sin((2 * Math.PI * t) / wl) * Math.max(0, taper);
+        pts.push(`${r2(a.x1 + ux * t + nx * off)} ${r2(a.y1 + uy * t + ny * off)}`);
+      }
+      d = 'M' + pts.join('L');
+    } else {
+      d = `M${r2(a.x1)} ${r2(a.y1)}L${r2(bx)} ${r2(by)}`;
+    }
+    const cls = `arrow ${a.style}${a.id === selId ? ' sel' : ''}${draft ? ' draft' : ''}`;
+    return `<g data-id="${a.id}" class="${cls}">
+      <path class="hit" d="M${r2(a.x1)} ${r2(a.y1)}L${r2(a.x2)} ${r2(a.y2)}"/>
+      <path class="shaft" d="${d}"/>
+      <path class="head" d="M${r2(a.x2)} ${r2(a.y2)}L${r2(bx + nx * HW)} ${r2(by + ny * HW)}L${r2(bx - nx * HW)} ${r2(by - ny * HW)}Z"/>
+    </g>`;
+  }
+  function inkPath(pts) {
+    if (pts.length < 2) return '';
+    let d = `M${r2(pts[0][0])} ${r2(pts[0][1])}`;
+    for (let i = 1; i < pts.length - 1; i++) {
+      const mx = (pts[i][0] + pts[i + 1][0]) / 2, my = (pts[i][1] + pts[i + 1][1]) / 2;
+      d += `Q${r2(pts[i][0])} ${r2(pts[i][1])} ${r2(mx)} ${r2(my)}`;
+    }
+    const last = pts[pts.length - 1];
+    return d + `L${r2(last[0])} ${r2(last[1])}`;
+  }
+  function inkSVG(k) {
+    const d = inkPath(k.pts);
+    if (!d) return '';
+    const sel = k.id === selId;
+    return `<g data-id="${k.id}" class="ink"><path class="hit" d="${d}"/>${sel ? `<path class="glow" d="${d}"/>` : ''}<path class="line" d="${d}" style="stroke:${k.color}"/></g>`;
+  }
+  function pieceSVG(p) {
+    const sel = p.id === selId;
+    const t = `translate(${r2(p.x)} ${r2(p.y)})${VIEWS[view].spin}`;
+    if (p.kind === 'ball') {
+      return `<g data-id="${p.id}" class="piece" transform="${t}">
+        <circle class="pad" r="1.9"/><circle class="shadow" cx=".15" cy=".25" r=".78"/><circle class="ballc" r=".78"/>
+        ${sel ? '<circle class="ring" r="1.5"/>' : ''}</g>`;
+    }
+    const color = pieceColor(p);
+    // Goalkeepers wear their own color, with a ring in the team color so you can still tell the sides apart.
+    return `<g data-id="${p.id}" class="piece" transform="${t}">
+      <circle class="pad" r="2.5"/><circle class="shadow" cx=".3" cy=".4" r="1.95"/>
+      <circle class="body" r="1.95" style="fill:${color}"/>
+      ${p.gk ? `<circle class="gkring" r="2.2" style="stroke:${state.teams[p.team]}"/>` : ''}
+      <text class="num" y=".1" style="fill:${textOn(color)}">${p.num === '' ? '' : p.num}</text>
+      ${sel ? '<circle class="ring" r="2.7"/>' : ''}</g>`;
+  }
+  let drafting = new Set();
+  // `frameView` lets playback draw an in-between picture without touching the saved steps.
+  function render(frameView) {
+    const items = frameView || state.items;
+    const fade = (html, i) => (i.op != null && i.op < 1 ? html.replace('<g ', `<g opacity="${r2(i.op)}" `) : html);
+    const arrows = items.filter((i) => i.kind === 'arrow');
+    const players = items.filter((i) => i.kind === 'player');
+    const balls = items.filter((i) => i.kind === 'ball');
+    inkLayer.innerHTML = items.filter((i) => i.kind === 'ink').map((k) => fade(inkSVG(k), k)).join('');
+    arrowLayer.innerHTML = arrows.map((a) => fade(arrowSVG(a, drafting.has(a.id)), a)).join('');
+    pieceLayer.innerHTML = players.concat(balls).map((p) => fade(pieceSVG(p), p)).join('');
+  }
+  let raf = 0;
+  const renderSoon = () => { if (!raf) raf = requestAnimationFrame(() => { raf = 0; render(); }); };
+
+  // ---------- Selection bar ----------
+  function renderCtx() {
+    const it = selId && find(selId);
+    const pens = (current) => PENS.map((c) => `<button class="pen" data-act="pen" data-color="${c}" style="background:${c}" aria-label="Pen color ${c}" aria-pressed="${c === current}"></button>`).join('');
+    if (!it && tool === 'draw') {
+      const any = state.items.some((i) => i.kind === 'ink');
+      ctx.hidden = false;
+      ctx.innerHTML = `<span class="chip">Pen</span>${pens(pen)}<button class="btn danger" data-act="clearInk"${any ? '' : ' disabled'}>Erase drawings</button>`;
+      return;
+    }
+    if (!it) { ctx.hidden = true; ctx.innerHTML = ''; return; }
+    ctx.hidden = false;
+    const del = `<button class="btn danger" data-act="del">Delete</button>`;
+    if (it.kind === 'ink') {
+      ctx.innerHTML = `<span class="chip">Drawing</span>${pens(it.color)}${del}`;
+    } else if (it.kind === 'player') {
+      ctx.innerHTML = `
+        <span class="chip"><i style="background:${pieceColor(it)}"></i>${it.team === 'a' ? 'Player' : 'Opponent'}</span>
+        <div class="stepper">
+          <button class="btn" data-act="dec" aria-label="Lower number">−</button>
+          <input id="numInput" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="2" value="${it.num}" aria-label="Jersey number">
+          <button class="btn" data-act="inc" aria-label="Raise number">+</button>
+        </div>
+        <button class="btn" data-act="gk" aria-pressed="${!!it.gk}">Goalkeeper</button>
+        <button class="btn" data-act="swap">Switch team</button>${del}`;
+    } else if (it.kind === 'arrow') {
+      const b = (s, label) => `<button class="btn" data-act="style" data-style="${s}" aria-pressed="${it.style === s}">${label}</button>`;
+      ctx.innerHTML = `<span class="chip">Arrow</span><div class="seg">${b('pass', 'Pass')}${b('run', 'Run')}${b('dribble', 'Dribble')}</div>${del}`;
+    } else {
+      ctx.innerHTML = `<span class="chip">Ball</span>${del}`;
+    }
+  }
+  function select(id) { selId = id; render(); renderCtx(); }
+
+  ctx.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-act]'); if (!b) return;
+    const act = b.dataset.act;
+    const it = find(selId);
+    if (act === 'pen') {
+      pen = b.dataset.color; savePrefs();
+      if (it && it.kind === 'ink') { mutate(() => { it.color = pen; }); } else renderCtx();
+      return;
+    }
+    if (act === 'clearInk') {
+      mutate(() => { state.items = state.items.filter((i) => i.kind !== 'ink'); });
+      return;
+    }
+    if (!it) return;
+    if (act === 'del') { mutate(() => { state.items = state.items.filter((i) => i.id !== it.id); selId = null; }); return; }
+    if (act === 'gk') { const v = !it.gk; mutate(() => everyStep(it.id, (p) => { p.gk = v; })); return; }
+    if (act === 'swap') { const v = it.team === 'a' ? 'b' : 'a'; mutate(() => everyStep(it.id, (p) => { p.team = v; })); return; }
+    if (act === 'style') { mutate(() => { it.style = b.dataset.style; }); return; }
+    if (act === 'inc' || act === 'dec') {
+      const cur = it.num === '' ? 0 : it.num;
+      const next = act === 'inc' ? Math.min(99, cur + 1) : Math.max(0, cur - 1);
+      const before = snap(); everyStep(it.id, (p) => { p.num = next; }); pushHistory(before);
+      $('#numInput').value = next; render();
+    }
+  });
+  let numBefore = null;
+  ctx.addEventListener('focusin', (e) => { if (e.target.id === 'numInput') numBefore = snap(); });
+  ctx.addEventListener('input', (e) => {
+    if (e.target.id !== 'numInput') return;
+    const it = find(selId); if (!it) return;
+    const digits = e.target.value.replace(/\D/g, '').slice(0, 2);
+    e.target.value = digits;
+    const v = digits === '' ? '' : parseInt(digits, 10);
+    everyStep(it.id, (p) => { p.num = v; });
+    render();
+  });
+  ctx.addEventListener('focusout', (e) => {
+    if (e.target.id === 'numInput' && numBefore) { if (numBefore !== snap()) pushHistory(numBefore); numBefore = null; }
+  });
+  ctx.addEventListener('keydown', (e) => { if (e.target.id === 'numInput' && e.key === 'Enter') e.target.blur(); });
+
+  // ---------- Tools ----------
+  const HINTS = {
+    move: 'Drag pieces to move them. Tap one to change its number or delete it.',
+    a: 'Tap the pitch to place a player. Numbers count up on their own.',
+    b: 'Tap the pitch to place an opponent. Numbers count up on their own.',
+    ball: 'Tap the pitch to place a ball.',
+    pass: 'Drag to draw a pass. Start on a player to attach it.',
+    run: 'Drag to draw a run off the ball.',
+    dribble: 'Drag to draw a dribble (carry).',
+    draw: 'Draw freely with your finger or Apple Pencil. Pick a pen color below.',
+  };
+  function updateHint() {
+    const n = state.frames.length;
+    if (playing) hint.textContent = `Playing step ${state.frame + 1} of ${n}. Tap Stop to edit.`;
+    else if (state.example && tool === 'move') hint.textContent = 'Example play loaded. Tap Play below to watch it, or Clear to start fresh.';
+    else hint.textContent = HINTS[tool];
+  }
+  function setTool(t) {
+    if (playing) stopPlayback();
+    tool = t;
+    document.querySelectorAll('[data-tool]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.tool === t)));
+    if (t === 'draw') selId = null;
+    updateHint(); render(); renderCtx();
+  }
+  document.querySelectorAll('[data-tool]').forEach((b) => b.addEventListener('click', () => setTool(b.dataset.tool)));
+
+  function setView(v) {
+    view = v;
+    svg.setAttribute('viewBox', VIEWS[v].box);
+    if (VIEWS[v].world) world.setAttribute('transform', VIEWS[v].world); else world.removeAttribute('transform');
+    document.querySelectorAll('[data-view]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.view === v)));
+    drawPitch(); render(); savePrefs();
+  }
+  document.querySelectorAll('[data-view]').forEach((b) => b.addEventListener('click', () => setView(b.dataset.view)));
+
+  // ---------- Steps and playback ----------
+  // Jersey number, team and goalkeeper belong to the player, so they change in every step at once.
+  function everyStep(id, fn) { state.frames.forEach((f) => f.forEach((i) => { if (i.id === id) fn(i); })); }
+
+  let playing = false, playTimer = 0, playRaf = 0, playRun = 0; // playRun changes on every Play, so old frames stop
+  const MOVE_MS = 1500, HOLD_MS = 700;
+  const reduceMotion = () => { try { return matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) { return false; } };
+
+  function renderSteps() {
+    const chips = $('#stepChips');
+    chips.textContent = '';
+    state.frames.forEach((_, i) => {
+      const b = document.createElement('button');
+      b.className = 'step-chip';
+      b.textContent = String(i + 1);
+      b.setAttribute('aria-label', `Step ${i + 1}`);
+      b.setAttribute('aria-pressed', String(i === state.frame));
+      b.addEventListener('click', () => goStep(i));
+      chips.append(b);
+    });
+    const many = state.frames.length > 1;
+    $('#addStepBtn').disabled = playing || state.frames.length >= MAX_STEPS;
+    $('#delStepBtn').disabled = playing || !many;
+    $('#prevStepBtn').disabled = playing || state.frame === 0;
+    $('#nextStepBtn').disabled = playing || state.frame >= state.frames.length - 1;
+    const pb = $('#playBtn');
+    pb.disabled = !many && !playing;
+    pb.querySelector('.play-ic').toggleAttribute('hidden', playing);
+    pb.querySelector('.stop-ic').toggleAttribute('hidden', !playing);
+    pb.querySelector('.lbl').textContent = playing ? 'Stop' : 'Play';
+    $('#stepsHelp').hidden = many;
+  }
+  function goStep(i) {
+    if (playing) stopPlayback();
+    state.frame = Math.max(0, Math.min(state.frames.length - 1, i));
+    selId = null;
+    save(); render(); renderCtx(); renderSteps(); updateHint();
+  }
+  function addStep() {
+    if (playing) stopPlayback();
+    if (state.frames.length >= MAX_STEPS) return;
+    // The new step starts with everyone where they finished; arrows and drawings stay with the old step.
+    mutate(() => {
+      const copy = state.items.filter((i) => i.kind === 'player' || i.kind === 'ball').map((i) => ({ ...i }));
+      state.frames.splice(state.frame + 1, 0, copy);
+      state.frame += 1;
+      selId = null;
+    });
+    updateHint();
+  }
+  function deleteStep() {
+    if (playing) stopPlayback();
+    if (state.frames.length < 2) return;
+    mutate(() => {
+      state.frames.splice(state.frame, 1);
+      state.frame = Math.min(state.frame, state.frames.length - 1);
+      selId = null;
+    });
+    updateHint();
+  }
+
+  // In-between picture for the move from step a to step b, t from 0 to 1.
+  function tween(a, b, t) {
+    const e = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+    const isPiece = (i) => i.kind === 'player' || i.kind === 'ball';
+    const before = new Map(a.map((i) => [i.id, i]));
+    const after = new Set(b.map((i) => i.id));
+    const outOld = t < 0.7 ? 1 : 1 - (t - 0.7) / 0.3; // the old step's arrows stay until the move is nearly done
+    const inNew = t < 0.7 ? 0 : (t - 0.7) / 0.3;
+    const out = [];
+    a.forEach((i) => { if (!isPiece(i)) out.push({ ...i, op: outOld }); });
+    b.forEach((i) => { if (!isPiece(i)) out.push({ ...i, op: inNew }); });
+    b.forEach((i) => {
+      if (!isPiece(i)) return;
+      const p = before.get(i.id);
+      if (p && p.kind === i.kind) out.push({ ...i, x: p.x + (i.x - p.x) * e, y: p.y + (i.y - p.y) * e });
+      else out.push({ ...i, op: e }); // joins in this step
+    });
+    a.forEach((i) => { if (isPiece(i) && !after.has(i.id)) out.push({ ...i, op: 1 - e }); }); // leaves in this step
+    return out;
+  }
+  function playFrom(i) {
+    if (!playing) return;
+    if (i >= state.frames.length - 1) { stopPlayback(); return; }
+    const a = state.frames[i], b = state.frames[i + 1];
+    const t0 = performance.now();
+    const run = playRun;
+    const frame = () => {
+      if (!playing || run !== playRun) return;
+      const t = reduceMotion() ? 1 : Math.min(1, (performance.now() - t0) / MOVE_MS);
+      render(tween(a, b, t));
+      if (t < 1) { nextFrame(frame); return; }
+      state.frame = i + 1;
+      render(); renderSteps(); updateHint();
+      playTimer = setTimeout(() => playFrom(i + 1), HOLD_MS);
+    };
+    nextFrame(frame);
+  }
+  // Animation frame, with a timer as backup for views that pause animation frames.
+  function nextFrame(fn) {
+    let done = false;
+    const go = () => { if (!done) { done = true; cancelAnimationFrame(playRaf); fn(); } };
+    playRaf = requestAnimationFrame(go);
+    setTimeout(go, 50);
+  }
+  function startPlayback() {
+    if (state.frames.length < 2) return;
+    closePops();
+    if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+    selId = null; renderCtx();
+    playing = true;
+    playRun += 1;
+    stage.classList.add('playing');
+    if (state.frame >= state.frames.length - 1) state.frame = 0;
+    render(); renderSteps(); updateHint();
+    playTimer = setTimeout(() => playFrom(state.frame), HOLD_MS);
+  }
+  function stopPlayback() {
+    playing = false;
+    clearTimeout(playTimer); cancelAnimationFrame(playRaf);
+    stage.classList.remove('playing');
+    save(); render(); renderSteps(); renderCtx(); updateHint();
+  }
+  $('#playBtn').addEventListener('click', () => (playing ? stopPlayback() : startPlayback()));
+  $('#addStepBtn').addEventListener('click', addStep);
+  $('#delStepBtn').addEventListener('click', deleteStep);
+  $('#prevStepBtn').addEventListener('click', () => goStep(state.frame - 1));
+  $('#nextStepBtn').addEventListener('click', () => goStep(state.frame + 1));
+
+  // ---------- Pointer handling (multi-touch: one drag per finger) ----------
+  const drags = new Map();
+  const ARROW_TOOLS = ['pass', 'run', 'dribble'];
+  const clampX = (x) => Math.max(BOUNDS.x1, Math.min(BOUNDS.x2, x));
+  const clampY = (y) => Math.max(BOUNDS.y1, Math.min(BOUNDS.y2, y));
+  function toPitch(e) {
+    const m = world.getScreenCTM().inverse();
+    const p = new DOMPoint(e.clientX, e.clientY).matrixTransform(m);
+    return { x: p.x, y: p.y };
+  }
+
+  let lastPen = 0;
+  svg.addEventListener('pointerdown', (e) => {
+    if (e.button > 0 || playing) return;
+    // Palm rejection: while an Apple Pencil is in use, ignore resting fingers in Draw mode.
+    if (e.pointerType === 'pen') lastPen = Date.now();
+    else if (tool === 'draw' && e.pointerType === 'touch' && Date.now() - lastPen < 1500) return;
+    if (document.activeElement && document.activeElement.id === 'numInput') document.activeElement.blur();
+    closePops();
+    const p = toPitch(e);
+    const hitEl = e.target.closest && e.target.closest('[data-id]');
+    const hit = hitEl ? find(hitEl.dataset.id) : null;
+    const before = snap();
+    try { svg.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+
+    if (tool === 'draw') {
+      const k = { id: uid(), kind: 'ink', color: pen, pts: [[p.x, p.y]] };
+      state.items.push(k);
+      drags.set(e.pointerId, { type: 'ink', id: k.id, before });
+      selId = null;
+    } else if (ARROW_TOOLS.includes(tool)) {
+      const s = hit && hit.kind !== 'arrow' ? { x: hit.x, y: hit.y } : p;
+      const a = { id: uid(), kind: 'arrow', style: tool, x1: s.x, y1: s.y, x2: s.x, y2: s.y };
+      state.items.push(a);
+      drafting.add(a.id);
+      drags.set(e.pointerId, { type: 'draw', id: a.id, before });
+      selId = null; renderCtx();
+    } else if (hit) {
+      selId = hit.id;
+      if (hit.kind === 'ink') drags.set(e.pointerId, { type: 'inkmove', id: hit.id, sx: p.x, sy: p.y, o: hit.pts.map((q) => q.slice()), before });
+      else if (hit.kind === 'arrow') drags.set(e.pointerId, { type: 'arrow', id: hit.id, sx: p.x, sy: p.y, o: { ...hit }, before });
+      else drags.set(e.pointerId, { type: 'piece', id: hit.id, dx: hit.x - p.x, dy: hit.y - p.y, before });
+      renderCtx();
+    } else if (tool === 'a' || tool === 'b' || tool === 'ball') {
+      const it = tool === 'ball'
+        ? { id: uid(), kind: 'ball', x: p.x, y: p.y }
+        : { id: uid(), kind: 'player', team: tool, num: nextNum(tool), x: p.x, y: p.y };
+      state.items.push(it);
+      selId = it.id;
+      drags.set(e.pointerId, { type: 'piece', id: it.id, dx: 0, dy: 0, before, added: true });
+      renderCtx();
+    } else {
+      selId = null; renderCtx();
+    }
+    render();
+    if (drags.size) stage.classList.add('dragging');
+  });
+
+  svg.addEventListener('pointermove', (e) => {
+    const d = drags.get(e.pointerId); if (!d) return;
+    const it = find(d.id); if (!it) return;
+    const p = toPitch(e);
+    if (d.type === 'piece') { it.x = clampX(p.x + d.dx); it.y = clampY(p.y + d.dy); }
+    else if (d.type === 'draw') { it.x2 = clampX(p.x); it.y2 = clampY(p.y); }
+    else if (d.type === 'ink') {
+      const evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [];
+      for (const ev of (evs.length ? evs : [e])) {
+        const q = toPitch(ev), last = it.pts[it.pts.length - 1];
+        if (Math.hypot(q.x - last[0], q.y - last[1]) > 0.25) it.pts.push([r2(clampX(q.x)), r2(clampY(q.y))]);
+      }
+    }
+    else if (d.type === 'inkmove') {
+      const mx = p.x - d.sx, my = p.y - d.sy;
+      it.pts = d.o.map((q) => [q[0] + mx, q[1] + my]);
+    }
+    else if (d.type === 'arrow') {
+      const mx = p.x - d.sx, my = p.y - d.sy;
+      it.x1 = d.o.x1 + mx; it.y1 = d.o.y1 + my; it.x2 = d.o.x2 + mx; it.y2 = d.o.y2 + my;
+    }
+    d.moved = true;
+    renderSoon();
+  });
+
+  function endDrag(e) {
+    const d = drags.get(e.pointerId); if (!d) return;
+    drags.delete(e.pointerId);
+    const it = find(d.id);
+    if (d.type === 'draw') {
+      drafting.delete(d.id);
+      if (it && Math.hypot(it.x2 - it.x1, it.y2 - it.y1) < 2) {
+        state.items = state.items.filter((i) => i.id !== d.id);
+      } else if (it) {
+        pushHistory(d.before);
+      }
+    } else if (d.type === 'ink') {
+      if (it && it.pts.length < 2) state.items = state.items.filter((i) => i.id !== d.id);
+      else if (it) { it.pts = it.pts.map((q) => [r2(q[0]), r2(q[1])]); pushHistory(d.before); }
+    } else if (d.moved || d.added) {
+      if (d.type === 'inkmove' && it) it.pts = it.pts.map((q) => [r2(q[0]), r2(q[1])]);
+      pushHistory(d.before);
+    }
+    if (!drags.size) stage.classList.remove('dragging');
+    render();
+    if (tool === 'draw') renderCtx();
+    if (state.example === false) updateHint();
+  }
+  svg.addEventListener('pointerup', endDrag);
+  svg.addEventListener('pointercancel', endDrag);
+  document.addEventListener('gesturestart', (e) => e.preventDefault());
+
+  // ---------- Actions ----------
+  $('#undoBtn').addEventListener('click', undo);
+
+  let clearTimer = 0;
+  $('#clearBtn').addEventListener('click', () => {
+    const btn = $('#clearBtn');
+    if (!btn.classList.contains('armed')) {
+      btn.classList.add('armed'); $('#clearLbl').textContent = 'Tap to confirm';
+      clearTimer = setTimeout(disarm, 3000);
+      return;
+    }
+    disarm();
+    if (playing) stopPlayback();
+    mutate(() => { state.frames = [[]]; state.frame = 0; selId = null; });
+    currentPlay = null; savePrefs(); paintPlayTag(); renderPlays();
+    updateHint();
+  });
+  function disarm() {
+    clearTimeout(clearTimer);
+    $('#clearBtn').classList.remove('armed'); $('#clearLbl').textContent = 'Clear';
+  }
+
+  // Team colours
+  function paintTeams() {
+    COLOR_KEYS.forEach((t) => {
+      const c = state.teams[t];
+      if (t === 'a' || t === 'b') {
+        $('#tok' + t.toUpperCase()).setAttribute('fill', c);
+        $('#tok' + t.toUpperCase() + '2').setAttribute('fill', c);
+      }
+      const wrap = pop.querySelector(`.swatches[data-team="${t}"]`);
+      const isCustom = !PRESETS.includes(c.toUpperCase());
+      wrap.innerHTML = PRESETS.map((p) => `<button class="sw" data-team="${t}" data-color="${p}" style="background:${p}" aria-label="Color ${p}" aria-pressed="${c.toUpperCase() === p}"></button>`).join('')
+        + `<label class="custom" title="Pick any color"${isCustom ? ` style="background:${c};border-style:solid"` : ''}>${isCustom ? '' : '+'}<input type="color" id="custom-${t}" data-team="${t}" value="${c}" aria-label="Custom color"></label>`;
+    });
+  }
+  function setTeamColor(t, c, before) {
+    if (!HEX.test(c)) return;
+    state.teams[t] = c;
+    paintTeams(); render(); renderCtx();
+    if (before) pushHistory(before);
+  }
+  // Two pop-overs share one slot: opening one closes the other.
+  const POPS = [[pop, '#colorsBtn'], [$('#playsPop'), '#playsBtn']];
+  function closePops(except) {
+    POPS.forEach(([p, b]) => { if (p !== except) { p.hidden = true; $(b).setAttribute('aria-expanded', 'false'); } });
+  }
+  function togglePop(p, btnSel) {
+    const open = p.hidden;
+    closePops(p);
+    p.hidden = !open;
+    $(btnSel).setAttribute('aria-expanded', String(open));
+    return open;
+  }
+  $('#colorsBtn').addEventListener('click', () => togglePop(pop, '#colorsBtn'));
+  $('#playsBtn').addEventListener('click', () => { if (togglePop($('#playsPop'), '#playsBtn')) { saveNote(''); renderPlays(); } });
+  pop.addEventListener('click', (e) => {
+    const b = e.target.closest('.sw'); if (!b) return;
+    setTeamColor(b.dataset.team, b.dataset.color, snap());
+  });
+  let colorBefore = null;
+  pop.addEventListener('input', (e) => {
+    if (e.target.type !== 'color') return;
+    if (!colorBefore) colorBefore = snap();
+    state.teams[e.target.dataset.team] = e.target.value;
+    ['a', 'b'].forEach((t) => { $('#tok' + t.toUpperCase()).setAttribute('fill', state.teams[t]); $('#tok' + t.toUpperCase() + '2').setAttribute('fill', state.teams[t]); });
+    render(); renderCtx();
+  });
+  pop.addEventListener('change', (e) => {
+    if (e.target.type !== 'color') return;
+    setTeamColor(e.target.dataset.team, e.target.value, colorBefore || snap());
+    colorBefore = null;
+  });
+  document.addEventListener('pointerdown', (e) => {
+    if (e.target.closest('.pop, #colorsBtn, #playsBtn')) return;
+    closePops();
+  });
+
+  // ---------- Saved plays (kept in the artifact's shared store, collection "plays") ----------
+  let db = null, canWrite = true, plays = [], playsState = 'loading', saving = false;
+  const fmtDate = (ms) => { try { return new Date(ms).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }); } catch (e) { return ''; } };
+
+  function saveNote(msg) { const n = $('#saveNote'); n.textContent = msg; n.hidden = !msg; }
+  function paintPlayTag() {
+    const t = $('#playTag');
+    t.hidden = !currentPlay;
+    t.textContent = currentPlay ? currentPlay.name : '';
+  }
+  function boardDoc(name) {
+    const s = JSON.parse(snap());
+    return {
+      name,
+      view,
+      updatedAt: Date.now(),
+      board: { teams: s.teams, frames: s.frames },
+    };
+  }
+  function playSummary(p) {
+    const b = p.board || {};
+    const frames = Array.isArray(b.frames) ? b.frames : Array.isArray(b.items) ? [b.items] : [[]];
+    const first = Array.isArray(frames[0]) ? frames[0] : [];
+    const players = first.filter((i) => i && i.kind === 'player').length;
+    const bits = [];
+    if (p.example) bits.push('Example');
+    if (frames.length > 1) bits.push(`${frames.length} steps`);
+    if (p.updatedAt) bits.push(fmtDate(p.updatedAt));
+    bits.push(p.view === 'half' ? 'Half pitch' : 'Full pitch');
+    bits.push(players === 1 ? '1 player' : `${players} players`);
+    return bits.join(' · ');
+  }
+
+  function renderPlays() {
+    const list = $('#playList'), note = $('#playsNote');
+    const on = !!db && playsState !== 'off';
+    $('#saveBlock').hidden = !on || !canWrite;
+    const known = currentPlay && plays.some((p) => p.id === currentPlay.id);
+    const up = $('#updateBtn');
+    up.hidden = !on || !canWrite || !known;
+    if (known) up.textContent = `Save changes to “${currentPlay.name}”`;
+    $('#saveNewBtn').disabled = up.disabled = saving;
+
+    list.textContent = '';
+    const sorted = plays.slice().sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+    sorted.forEach((p) => {
+      const row = document.createElement('div');
+      row.className = 'prow' + (currentPlay && currentPlay.id === p.id ? ' current' : '');
+      const open = document.createElement('button');
+      open.className = 'popen';
+      open.title = 'Open this play';
+      const nm = document.createElement('span'); nm.className = 'pname'; nm.textContent = String(p.name || 'Untitled play');
+      const mt = document.createElement('span'); mt.className = 'pmeta'; mt.textContent = playSummary(p);
+      open.append(nm, mt);
+      open.addEventListener('click', () => openPlay(p));
+      row.append(open);
+      if (canWrite) {
+        const del = document.createElement('button');
+        del.className = 'btn danger';
+        del.textContent = 'Delete';
+        del.setAttribute('aria-label', `Delete ${p.name || 'play'}`);
+        let armed = 0;
+        del.addEventListener('click', () => {
+          if (!armed) {
+            del.classList.add('armed'); del.textContent = 'Confirm';
+            armed = setTimeout(() => { armed = 0; del.classList.remove('armed'); del.textContent = 'Delete'; }, 3000);
+            return;
+          }
+          clearTimeout(armed);
+          deletePlay(p);
+        });
+        row.append(del);
+      }
+      list.append(row);
+    });
+
+    const msgs = {
+      off: 'Saved plays are not available here. Open the board on claude.ai while signed in to save and open plays.',
+      loading: 'Loading saved plays…',
+      slow: 'Can’t reach your saved plays yet. Check the connection; they will appear when it’s back.',
+      error: 'Saved plays stopped loading. Reload the page to try again.',
+    };
+    let msg = msgs[playsState] || '';
+    if (!db && playsState !== 'loading') msg = msgs.off;
+    if (playsState === 'ready' && !plays.length) {
+      msg = canWrite ? 'No saved plays yet. Set up the board, give it a name above and tap Save.' : 'No saved plays yet.';
+    }
+    note.textContent = msg;
+    note.hidden = !msg;
+  }
+
+  function openPlay(p) {
+    if (playing) stopPlayback();
+    const s = sanitize(p.board ? { teams: p.board.teams, frames: p.board.frames, items: p.board.items } : null);
+    if (!s) { saveNote('This play could not be opened.'); return; }
+    const before = snap();
+    state = s;
+    selId = null;
+    pushHistory(before);
+    currentPlay = { id: p.id, name: String(p.name || 'Untitled play').slice(0, 60) };
+    savePrefs();
+    paintTeams();
+    setView(VIEWS[p.view] ? p.view : 'full');
+    renderCtx(); updateHint(); paintPlayTag();
+    closePops();
+  }
+
+  async function savePlay(asNew) {
+    if (!db || saving) return;
+    const input = $('#playName');
+    const name = asNew ? input.value.trim().slice(0, 60) : currentPlay && currentPlay.name;
+    if (!name) { saveNote('Give the play a name first.'); input.focus(); return; }
+    saving = true; renderPlays();
+    try {
+      if (asNew) {
+        const ref = await db.collection('plays').add(boardDoc(name));
+        currentPlay = { id: ref.id, name };
+        input.value = '';
+      } else {
+        await db.doc('plays/' + currentPlay.id).set(boardDoc(name));
+      }
+      saveNote(`Saved “${name}”.`);
+      savePrefs(); paintPlayTag();
+    } catch (e) {
+      const code = e && e.code;
+      if (code === 'quota_exceeded') saveNote('Storage is full. Delete some old plays, then save again.');
+      else if (code === 'invalid_argument' || code === 'not_granted') { canWrite = false; saveNote('You can open plays here but not save them. Ask the board’s owner for edit access.'); }
+      else saveNote('Couldn’t save the play. Check the connection and try again.');
+    } finally {
+      saving = false; renderPlays();
+    }
+  }
+
+  async function deletePlay(p) {
+    try {
+      await db.doc('plays/' + p.id).delete();
+      if (currentPlay && currentPlay.id === p.id) { currentPlay = null; savePrefs(); paintPlayTag(); }
+      saveNote(`Deleted “${p.name || 'play'}”.`);
+    } catch (e) {
+      saveNote('Couldn’t delete the play. Check the connection and try again.');
+    }
+    renderPlays();
+  }
+
+  $('#saveNewBtn').addEventListener('click', () => savePlay(true));
+  $('#updateBtn').addEventListener('click', () => savePlay(false));
+  $('#playName').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); savePlay(true); } });
+
+  async function initPlays() {
+    const c = window.claude;
+    if (!c || typeof c.use !== 'function') { playsState = 'off'; renderPlays(); return; }
+    try { db = await c.use('db'); } catch (e) { db = null; }
+    if (!db) { playsState = 'off'; renderPlays(); return; }
+    try {
+      const user = await c.use('user');
+      if (user && user.can && (await user.can('data.write')) === false) canWrite = false;
+    } catch (e) { /* keep the controls; a refused write decides */ }
+    const timer = setTimeout(() => { if (playsState === 'loading') { playsState = 'slow'; renderPlays(); } }, 10000);
+    db.collection('plays').onSnapshot((s) => {
+      plays = s.docs.map((d) => ({ id: d.id, ...d.data() }));
+      if (!s.metadata.fromCache) clearTimeout(timer);
+      if (!s.metadata.fromCache || plays.length) playsState = 'ready';
+      renderPlays();
+    }, () => { clearTimeout(timer); playsState = 'error'; renderPlays(); });
+    renderPlays();
+  }
+
+  // Keyboard (for iPad with keyboard or desktop)
+  document.addEventListener('keydown', (e) => {
+    if (e.target.tagName === 'INPUT') return;
+    if ((e.key === 'Delete' || e.key === 'Backspace') && selId) {
+      e.preventDefault();
+      mutate(() => { state.items = state.items.filter((i) => i.id !== selId); selId = null; });
+    } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
+      e.preventDefault(); undo();
+    } else if (e.key === 'Escape') {
+      closePops(); select(null);
+    }
+  });
+
+  // ---------- Boot ----------
+  const hot = window.claude && window.claude.hot;
+  if (hot && hot.snapshot) hot.snapshot(() => ({ board: snap(), tool, view }));
+  function start(data) {
+    loadPrefs();
+    if (data && data.board) { try { restore(data.board); } catch (e) { load(); } } else load();
+    paintTeams();
+    setView(data && VIEWS[data.view] ? data.view : view);
+    setTool(data && data.tool && HINTS[data.tool] ? data.tool : 'move');
+    paintPlayTag(); renderPlays(); renderSteps(); updateHint();
+    initPlays();
+  }
+  if (hot && hot.ready) hot.ready(start); else start((hot && hot.data) || {});
+})();
+</script>
+
+<script>
+if ('serviceWorker' in navigator) {
+  addEventListener('load', () => { navigator.serviceWorker.register('./sw.js').catch(() => {}); });
+}
+</script>
+</body>
+</html>
